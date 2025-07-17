@@ -23,6 +23,9 @@ const RADIUS_BASKETBALL: f32 = 160.;
 const RADIUS_WATERMELON: f32 = 224.;
 
 const GRAVITY: f32 = -100.;
+const DENSITY: f32 = 1e1;
+const SPRING: f32 = 1e5;
+const DAMPER: f32 = 1e4;
 
 pub struct FruitGame;
 
@@ -32,16 +35,15 @@ impl Plugin for FruitGame {
         .add_systems(Startup, (load_container, load_player))
         .add_systems(Update, (
             player_input,
-            check_wall_collisions,
-            check_fruit_collisions,
         ))
         .add_systems(FixedUpdate, (
             apply_velocity,
-        ))
+            apply_acceleration,
+            apply_gravity,
+            check_wall_collisions,
+            check_fruit_collisions,
+        ).chain())
         .add_systems(RunFixedMainLoop, (
-            apply_gravity.in_set(RunFixedMainLoopSystem::BeforeFixedMainLoop),
-            check_wall_collisions.in_set(RunFixedMainLoopSystem::AfterFixedMainLoop),
-            check_fruit_collisions.in_set(RunFixedMainLoopSystem::AfterFixedMainLoop),
             interpolate_rendered_transform.in_set(RunFixedMainLoopSystem::AfterFixedMainLoop),
         ))
         ;
@@ -94,6 +96,11 @@ impl FruitType {
             FruitType::Watermelon => Color::from(BLUE),
         }
     }
+
+    pub fn mass(&self) -> f32 {
+        let r = self.to_circle().radius;
+        r * r * DENSITY
+    }
 }
 
 #[derive(Bundle, Clone, Default)]
@@ -104,7 +111,7 @@ pub struct Fruit {
     pub pos: Position,
     pub pre: PreviousPosition,
     pub vel: Velocity,
-    // pub acc: Acceleration,
+    pub acc: Acceleration,
 }
 
 impl Fruit {
@@ -280,7 +287,7 @@ fn player_input(
             pos: Position(transform.translation.truncate()),
             pre: PreviousPosition(transform.translation.truncate()),
             vel: Default::default(),
-            // acc: Default::default(),
+            acc: Default::default(),
         };
         // drop fruit
         commands.spawn((
@@ -299,21 +306,38 @@ fn player_input(
 
 fn apply_velocity(
     time: Res<Time>,
-    mut query: Query<(&mut Position, &mut PreviousPosition, &Velocity)>
+    mut query: Query<(&mut Position, &mut PreviousPosition, &Velocity, &Acceleration)>
 ) {
-    for (mut pos, mut pre, vel) in &mut query {
+    let dt = time.delta_secs();
+    let dt2 = 0.5 * dt * dt;
+    for (mut pos, mut pre, vel, acc) in &mut query {
         pre.0 = pos.0;
-        pos.0 += vel.0 * time.delta_secs();
+        pos.0 += vel.0 * dt + 0.5 * acc.0 * dt2;
+        if acc.y > 0. {
+            warn!("apply_velocity -- vel: {:?}", vel);
+        }
+    }
+}
+
+fn apply_acceleration(
+    time: Res<Time>,
+    mut query: Query<(&mut Velocity, &mut Acceleration)>,
+) {
+    let dt = time.delta_secs();
+    for (mut vel, mut acc) in &mut query {
+        vel.0 += acc.0 * dt;
+        if acc.y > 0. {
+            warn_once!("{:?}", vel);
+        }
+        acc.0 *= 0.;
     }
 }
 
 fn apply_gravity(
-    time: Res<Time>,
-    mut query: Query<&mut Velocity, (With<FruitType>, Without<Player>)>,
+    mut query: Query<&mut Acceleration, (With<FruitType>, Without<Player>)>,
 ) {
-    let acc = Vec2::new(0., GRAVITY);
-    for mut vel in &mut query {
-        vel.0 += acc * time.delta_secs();
+    for mut acc in &mut query {
+        acc.0 += Vec2::new(0., GRAVITY);
     }
 }
 
@@ -342,36 +366,50 @@ fn interpolate_rendered_transform(
 pub struct Collider;
 
 fn check_wall_collisions(
-    collider_query: Query<(&FruitType, &mut Position, &mut PreviousPosition, &mut Velocity), With<Collider>>,
-    // wall_query: Query<(&Transform,), With<Wall>>,
+    collider_query: Query<(&FruitType, &Position, &Velocity, &mut Acceleration), With<Collider>>,
 ) {
-    for (fruit, mut fruit_position, mut fruit_previous_position, mut fruit_velocity) in collider_query {
+    for (fruit, pos, vel, mut acc) in collider_query {
+        // let mut force = Vec2::default();
         let radius = fruit.to_circle().radius;
-        if fruit_position.x > RIGHT - radius {
-            fruit_position.x = RIGHT - radius;
-            fruit_previous_position.x = RIGHT - radius;
-            fruit_velocity.0.x = 0.;
+
+        let right_squish = radius - (RIGHT - pos.x);
+        let x_force = if right_squish > 0. {
+            // fruit_position.x = RIGHT - radius;
+            // fruit_previous_position.x = RIGHT - radius;
+            -right_squish * SPRING - vel.x * DAMPER
+        } else {
+            let left_squish = radius - (pos.x - LEFT);
+            if left_squish > 0. {
+                // fruit_position.x = LEFT + radius;
+                // fruit_previous_position.x = LEFT + radius;
+                left_squish * SPRING - vel.x * DAMPER
+            } else {
+                0.0
+            }
+        };
+        if x_force > 0. {
+            acc.x += x_force / fruit.mass();
         }
-        if fruit_position.x < LEFT + radius {
-            fruit_position.x = LEFT + radius;
-            fruit_previous_position.x = LEFT + radius;
-            fruit_velocity.0.x = 0.;
+
+        let bottom_squish = radius - (pos.y - BOTTOM);
+        if bottom_squish > 0. {
+            // fruit_position.y = BOTTOM + radius;
+            // fruit_previous_position.y = BOTTOM + radius;
+            let y_force = bottom_squish * SPRING - vel.y * DAMPER;
+            acc.y += y_force / fruit.mass();
+            info!("vel: {:?}, acc: {:?}, y_force: {:?} = {:?} - {:?}", vel, acc, y_force, bottom_squish * SPRING, vel.y * DAMPER);
         }
-        if fruit_position.y < BOTTOM + radius {
-            fruit_position.y = BOTTOM + radius;
-            fruit_previous_position.y = BOTTOM + radius;
-            fruit_velocity.0.y = 0.;
-        }
+        // acc.0 += force / fruit.mass();
     }
 }
 
 fn check_fruit_collisions(
-    mut collider_query: Query<(&FruitType, &mut Position, &mut PreviousPosition, &mut Velocity), With<Collider>>,
+    mut collider_query: Query<(&FruitType, &mut Position, &mut Velocity), With<Collider>>,
 ) {
     let mut combinations = collider_query.iter_combinations_mut();
     while let Some([
-        (fruit0, mut fruit_position0, mut fruit_previous_position0, mut fruit_velocity0),
-        (fruit1, mut fruit_position1, mut fruit_previous_position1, mut fruit_velocity1),
+        (fruit0, mut fruit_position0, mut fruit_velocity0),
+        (fruit1, mut fruit_position1, mut fruit_velocity1),
     ]) = combinations.fetch_next() {
         let radius0 = fruit0.to_circle().radius;
         let radius1 = fruit1.to_circle().radius;
@@ -380,14 +418,11 @@ fn check_fruit_collisions(
         let overlap = radius0 + radius1 - seg.length();
         if overlap > 0. && overlap < radius0 + radius1 {
             // collision!
-            let dist0 = radius0 - (overlap / 2.);
-            let dist1 = radius1 - (overlap / 2.);
-            fruit_position0.0 -= seg.direction() * dist0;
-            fruit_position1.0 += seg.direction() * dist1;
-            fruit_previous_position0.0 = fruit_position0.0;
-            fruit_previous_position1.0 = fruit_position1.0;
-            fruit_velocity0.0 -= seg.direction() * 10.;
-            fruit_velocity1.0 += seg.direction() * 10.;
+            let squish = overlap / 2.;
+            fruit_position0.0 -= seg.direction() * squish;
+            fruit_position1.0 += seg.direction() * squish;
+            fruit_velocity0.0 -= seg.direction() * squish * 20.;
+            fruit_velocity1.0 += seg.direction() * squish * 20.;
         }
     }
 
