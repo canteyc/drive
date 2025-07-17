@@ -23,9 +23,9 @@ const RADIUS_BASKETBALL: f32 = 160.;
 const RADIUS_WATERMELON: f32 = 224.;
 
 const GRAVITY: f32 = -100.;
-const DENSITY: f32 = 1e1;
-const SPRING: f32 = 1e5;
-const DAMPER: f32 = 1e4;
+const DENSITY: f32 = 1e0;
+const SPRING: f32 = 1e4;
+const DAMPER: f32 = 1e-1;
 
 pub struct FruitGame;
 
@@ -313,9 +313,6 @@ fn apply_velocity(
     for (mut pos, mut pre, vel, acc) in &mut query {
         pre.0 = pos.0;
         pos.0 += vel.0 * dt + 0.5 * acc.0 * dt2;
-        if acc.y > 0. {
-            warn!("apply_velocity -- vel: {:?}", vel);
-        }
     }
 }
 
@@ -326,9 +323,6 @@ fn apply_acceleration(
     let dt = time.delta_secs();
     for (mut vel, mut acc) in &mut query {
         vel.0 += acc.0 * dt;
-        if acc.y > 0. {
-            warn_once!("{:?}", vel);
-        }
         acc.0 *= 0.;
     }
 }
@@ -366,63 +360,69 @@ fn interpolate_rendered_transform(
 pub struct Collider;
 
 fn check_wall_collisions(
-    collider_query: Query<(&FruitType, &Position, &Velocity, &mut Acceleration), With<Collider>>,
+    collider_query: Query<(&FruitType, &mut Position, &Velocity, &mut Acceleration), With<Collider>>,
 ) {
-    for (fruit, pos, vel, mut acc) in collider_query {
-        // let mut force = Vec2::default();
+    for (fruit, mut pos, vel, mut acc) in collider_query {
         let radius = fruit.to_circle().radius;
 
         let right_squish = radius - (RIGHT - pos.x);
         let x_force = if right_squish > 0. {
-            // fruit_position.x = RIGHT - radius;
-            // fruit_previous_position.x = RIGHT - radius;
+            pos.x = RIGHT - radius;
             -right_squish * SPRING - vel.x * DAMPER
         } else {
             let left_squish = radius - (pos.x - LEFT);
             if left_squish > 0. {
-                // fruit_position.x = LEFT + radius;
-                // fruit_previous_position.x = LEFT + radius;
+                pos.x = LEFT + radius;
                 left_squish * SPRING - vel.x * DAMPER
             } else {
                 0.0
             }
         };
-        if x_force > 0. {
+        if x_force != 0. {
             acc.x += x_force / fruit.mass();
         }
 
         let bottom_squish = radius - (pos.y - BOTTOM);
         if bottom_squish > 0. {
-            // fruit_position.y = BOTTOM + radius;
-            // fruit_previous_position.y = BOTTOM + radius;
+            pos.y = BOTTOM + radius;
             let y_force = bottom_squish * SPRING - vel.y * DAMPER;
             acc.y += y_force / fruit.mass();
-            info!("vel: {:?}, acc: {:?}, y_force: {:?} = {:?} - {:?}", vel, acc, y_force, bottom_squish * SPRING, vel.y * DAMPER);
         }
-        // acc.0 += force / fruit.mass();
     }
 }
 
 fn check_fruit_collisions(
-    mut collider_query: Query<(&FruitType, &mut Position, &mut Velocity), With<Collider>>,
+    mut collider_query: Query<(&FruitType, &mut Position, &mut Velocity, &mut Acceleration), With<Collider>>,
 ) {
     let mut combinations = collider_query.iter_combinations_mut();
     while let Some([
-        (fruit0, mut fruit_position0, mut fruit_velocity0),
-        (fruit1, mut fruit_position1, mut fruit_velocity1),
+        (fruit0, mut pos0, mut vel0, mut acc0),
+        (fruit1, mut pos1, mut vel1, mut acc1),
     ]) = combinations.fetch_next() {
         let radius0 = fruit0.to_circle().radius;
         let radius1 = fruit1.to_circle().radius;
 
-        let seg = Segment2d::new(fruit_position0.0, fruit_position1.0);
+        let seg = Segment2d::new(pos0.0, pos1.0);
         let overlap = radius0 + radius1 - seg.length();
         if overlap > 0. && overlap < radius0 + radius1 {
             // collision!
-            let squish = overlap / 2.;
-            fruit_position0.0 -= seg.direction() * squish;
-            fruit_position1.0 += seg.direction() * squish;
-            fruit_velocity0.0 -= seg.direction() * squish * 20.;
-            fruit_velocity1.0 += seg.direction() * squish * 20.;
+            let zero_to_one = seg.direction().as_vec2();
+            let squish = zero_to_one * (overlap / 2.);
+            let spring_force = squish * SPRING;
+
+            let vel0_radial = vel0.dot(zero_to_one);
+            let damp_force0 = vel0_radial * DAMPER;
+            let vel1_radial = vel1.dot(zero_to_one);
+            let damp_force1 = vel1_radial * DAMPER;
+
+            pos0.0 -= squish;
+            pos1.0 += squish;
+
+            vel0.0 -= zero_to_one * vel0_radial * 1.1;
+            vel1.0 -= zero_to_one * vel1_radial * 1.1;
+
+            acc0.0 += (spring_force + damp_force0) / fruit0.mass();
+            acc1.0 += (spring_force + damp_force1) / fruit1.mass();
         }
     }
 
