@@ -5,8 +5,8 @@ use bevy::{
 };
 
 
-const RIGHT: f32 = 200.;
-const LEFT: f32 = -200.;
+const RIGHT: f32 = 300.;
+const LEFT: f32 = -300.;
 const TOP: f32 = 300.;
 const BOTTOM: f32 = -300.;
 const THICKNESS: f32 = 1.;
@@ -42,16 +42,18 @@ impl Plugin for FruitGame {
             apply_gravity,
             check_wall_collisions,
             check_fruit_collisions,
+            merge,
         ).chain())
         .add_systems(RunFixedMainLoop, (
             interpolate_rendered_transform.in_set(RunFixedMainLoopSystem::AfterFixedMainLoop),
         ))
+        .add_event::<CollisionEvent>()
         ;
     }
 }
 
 
-#[derive(Component, Clone, Copy, Default)]
+#[derive(Component, Clone, Copy, Default, PartialEq, PartialOrd, Eq, Ord)]
 pub enum FruitType {
     #[default]
     Blueberry,
@@ -67,6 +69,20 @@ pub enum FruitType {
 }
 
 impl FruitType {
+    pub fn next(&self) -> Option<FruitType> {
+        match self {
+            FruitType::Blueberry => Some(FruitType::Cherry),
+            FruitType::Cherry => Some(FruitType::Apricot),
+            FruitType::Apricot => Some(FruitType::Plum),
+            FruitType::Plum => Some(FruitType::Orange),
+            FruitType::Orange => Some(FruitType::Apple),
+            FruitType::Apple => Some(FruitType::Grapefruit),
+            FruitType::Grapefruit => Some(FruitType::Honeydew),
+            FruitType::Honeydew => Some(FruitType::Basketball),
+            FruitType::Basketball => Some(FruitType::Watermelon),
+            FruitType::Watermelon => None,
+        }
+    }
     pub fn to_circle(&self) -> Circle {
         match self {
             FruitType::Blueberry => Circle::new(RADIUS_BLUEBERRY),
@@ -85,15 +101,15 @@ impl FruitType {
     pub fn color(&self) -> Color {
         match self {
             FruitType::Blueberry => Color::from(BLUE),
-            FruitType::Cherry => Color::from(BLUE),
-            FruitType::Apricot => Color::from(BLUE),
-            FruitType::Plum => Color::from(BLUE),
-            FruitType::Orange => Color::from(BLUE),
-            FruitType::Apple => Color::from(BLUE),
-            FruitType::Grapefruit => Color::from(BLUE),
-            FruitType::Honeydew => Color::from(BLUE),
-            FruitType::Basketball => Color::from(BLUE),
-            FruitType::Watermelon => Color::from(BLUE),
+            FruitType::Cherry => Color::from(RED),
+            FruitType::Apricot => Color::from(OLIVE),
+            FruitType::Plum => Color::from(PURPLE),
+            FruitType::Orange => Color::from(AQUA),
+            FruitType::Apple => Color::from(LIME),
+            FruitType::Grapefruit => Color::from(GRAY),
+            FruitType::Honeydew => Color::from(SILVER),
+            FruitType::Basketball => Color::from(NAVY),
+            FruitType::Watermelon => Color::from(GREEN),
         }
     }
 
@@ -127,34 +143,7 @@ impl Fruit {
             ..Default::default()
         }
     }
-
-//     pub fn Cherry() -> Self {}
-//
-//     pub fn Apricot() -> Self {}
-//
-//     pub fn Plum() -> Self {}
-//
-//     pub fn Orange() -> Self {}
-//
-//     pub fn Apple() -> Self {}
-//
-//     pub fn Grapefruit() -> Self {}
-//
-//     pub fn Honeydew() -> Self {}
-//
-//     pub fn Basketball() -> Self {}
-//
-//     pub fn Watermelon() -> Self {}
-
 }
-
-// fn spawn_fruit(
-//     mut commands: Commands,
-//     meshes: ResMut<Assets<Mesh>>,
-//     materials: ResMut<Assets<ColorMaterial>>,
-// ) {
-//     commands.spawn(Fruit::blueberry(meshes, materials));
-// }
 
 #[derive(Component, Default)]
 pub struct Wall;
@@ -359,6 +348,9 @@ fn interpolate_rendered_transform(
 #[derive(Component, Default)]
 pub struct Collider;
 
+#[derive(Event)]
+pub struct CollisionEvent([(Entity, FruitType, Position, Velocity, Acceleration); 2]);
+
 fn check_wall_collisions(
     collider_query: Query<(&FruitType, &mut Position, &Velocity, &mut Acceleration), With<Collider>>,
 ) {
@@ -392,12 +384,13 @@ fn check_wall_collisions(
 }
 
 fn check_fruit_collisions(
-    mut collider_query: Query<(&FruitType, &mut Position, &mut Velocity, &mut Acceleration), With<Collider>>,
+    mut collisions: EventWriter<CollisionEvent>,
+    mut collider_query: Query<(Entity, &FruitType, &mut Position, &mut Velocity, &mut Acceleration), With<Collider>>,
 ) {
     let mut combinations = collider_query.iter_combinations_mut();
     while let Some([
-        (fruit0, mut pos0, mut vel0, mut acc0),
-        (fruit1, mut pos1, mut vel1, mut acc1),
+        (entity0, fruit0, mut pos0, mut vel0, mut acc0),
+        (entity1, fruit1, mut pos1, mut vel1, mut acc1),
     ]) = combinations.fetch_next() {
         let radius0 = fruit0.to_circle().radius;
         let radius1 = fruit1.to_circle().radius;
@@ -406,6 +399,10 @@ fn check_fruit_collisions(
         let overlap = radius0 + radius1 - seg.length();
         if overlap > 0. && overlap < radius0 + radius1 {
             // collision!
+            collisions.write(CollisionEvent([
+                (entity0, fruit0.clone(), pos0.clone(), vel0.clone(), acc0.clone()),
+                (entity1, fruit1.clone(), pos1.clone(), vel1.clone(), acc1.clone())
+            ]));
             let zero_to_one = seg.direction().as_vec2();
             let squish = zero_to_one * (overlap / 2.);
             let spring_force = squish * SPRING;
@@ -426,4 +423,37 @@ fn check_fruit_collisions(
         }
     }
 
+}
+
+fn merge(
+    mut commands: Commands,
+    meshes: ResMut<Assets<Mesh>>,
+    materials: ResMut<Assets<ColorMaterial>>,
+    mut collisions: EventReader<CollisionEvent>,
+) {
+    for collision in collisions.read() {
+        let (entity0, fruit0, pos0, _, _) = collision.0[0];
+        let (entity1, fruit1, pos1, _, _) = collision.0[1];
+        if fruit0 != fruit1 {
+            continue;
+        }
+        if let Some(new_type) = fruit0.next() {
+            let midpoint = (pos0.0 + pos1.0) / 2.;
+            warn!("{midpoint:?}");
+
+            commands.entity(entity0).despawn();
+            commands.entity(entity1).despawn();
+
+            let mut merged_fruit = Fruit::new(new_type, meshes, materials);
+            merged_fruit.pos.0 = midpoint;
+            merged_fruit.pre.0 = midpoint;
+            commands.spawn((
+                merged_fruit,
+                Transform::from_xyz(midpoint.x, midpoint.y, 0.),
+                Collider,
+            ));
+            break;
+        }
+
+    }
 }
