@@ -23,9 +23,10 @@ const RADIUS_BASKETBALL: f32 = 160.;
 const RADIUS_WATERMELON: f32 = 224.;
 
 const GRAVITY: f32 = -100.;
-const DENSITY: f32 = 1e0;
-const SPRING: f32 = 1e4;
-const DAMPER: f32 = 1e-1;
+const DENSITY: f32 = 1e2;
+const SPRING: f32 = 1e2;
+const DAMPER: f32 = 1e1;
+const BOUNCE: f32 = 1.3;
 
 pub struct FruitGame;
 
@@ -53,7 +54,7 @@ impl Plugin for FruitGame {
 }
 
 
-#[derive(Component, Clone, Copy, Default, PartialEq, PartialOrd, Eq, Ord)]
+#[derive(Component, Clone, Copy, Default, Debug, PartialEq, PartialOrd, Eq, Ord)]
 pub enum FruitType {
     #[default]
     Blueberry,
@@ -247,7 +248,7 @@ fn load_player(
         Player {},
         DigitalInput { keys: vec![] },
         Fruit::new(FruitType::Blueberry, meshes, materials),
-        Transform::from_xyz(0., TOP, 0.),
+        Transform::from_xyz(0., TOP + RADIUS_BLUEBERRY, 0.),
     ));
 }
 
@@ -268,8 +269,8 @@ fn player_input(
     if keyboard_input.just_pressed(KeyCode::Backspace) {
         digital_input.keys.pop();
     }
-    else if keyboard_input.just_pressed(KeyCode::Space) {
-        let fruit = Fruit {
+    else if keyboard_input.just_pressed(KeyCode::ArrowDown) {
+        let mut fruit = Fruit {
             typ: *typ,
             mesh: mesh.clone(),
             material: material.clone(),
@@ -278,6 +279,7 @@ fn player_input(
             vel: Default::default(),
             acc: Default::default(),
         };
+        fruit.vel.0 += Vec2::new(0., -50.);
         // drop fruit
         commands.spawn((
             fruit,
@@ -352,9 +354,9 @@ pub struct Collider;
 pub struct CollisionEvent([(Entity, FruitType, Position, Velocity, Acceleration); 2]);
 
 fn check_wall_collisions(
-    collider_query: Query<(&FruitType, &mut Position, &Velocity, &mut Acceleration), With<Collider>>,
+    collider_query: Query<(&FruitType, &mut Position, &mut Velocity, &mut Acceleration), With<Collider>>,
 ) {
-    for (fruit, mut pos, vel, mut acc) in collider_query {
+    for (fruit, mut pos, mut vel, mut acc) in collider_query {
         let radius = fruit.to_circle().radius;
 
         let right_squish = radius - (RIGHT - pos.x);
@@ -377,8 +379,10 @@ fn check_wall_collisions(
         let bottom_squish = radius - (pos.y - BOTTOM);
         if bottom_squish > 0. {
             pos.y = BOTTOM + radius;
+            vel.y = 0.;
             let y_force = bottom_squish * SPRING - vel.y * DAMPER;
             acc.y += y_force / fruit.mass();
+            acc.x -= vel.x * DAMPER * 0.1;
         }
     }
 }
@@ -403,23 +407,59 @@ fn check_fruit_collisions(
                 (entity0, fruit0.clone(), pos0.clone(), vel0.clone(), acc0.clone()),
                 (entity1, fruit1.clone(), pos1.clone(), vel1.clone(), acc1.clone())
             ]));
-            let zero_to_one = seg.direction().as_vec2();
-            let squish = zero_to_one * (overlap / 2.);
-            let spring_force = squish * SPRING;
 
-            let vel0_radial = vel0.dot(zero_to_one);
-            let damp_force0 = vel0_radial * DAMPER;
-            let vel1_radial = vel1.dot(zero_to_one);
-            let damp_force1 = vel1_radial * DAMPER;
+            fn reaction(toward_other: Vec2, overlap: f32, fruit: &FruitType, pos: &mut Position, vel: &mut Velocity, acc: &mut Acceleration) {
+                let squish = toward_other * (overlap / 2.);
+                // warn!("{fruit:?} - toward_other: {toward_other:?}");
+                pos.0 -= squish;
 
-            pos0.0 -= squish;
-            pos1.0 += squish;
+                let vel_toward_other = vel.dot(toward_other);
+                // warn!("{fruit:?} - vel before: {vel:?}");
+                vel.0 -= toward_other * vel_toward_other * BOUNCE;
+                // warn!("{fruit:?} - vel after: {vel:?}");
 
-            vel0.0 -= zero_to_one * vel0_radial * 1.1;
-            vel1.0 -= zero_to_one * vel1_radial * 1.1;
+                let spring_force = squish / fruit.to_circle().radius * SPRING;
+                // warn!("{fruit:?} - spring_force: {spring_force:?}");
+                let damp_force = toward_other * (vel_toward_other * DAMPER).max(0.);
+                // warn!("{fruit:?} - damp_force: {damp_force:?}");
+                // warn!("{fruit:?} - acc before: {acc:?}");
+                acc.0 -= (spring_force + damp_force) / fruit.mass();
+                // warn!("{fruit:?} - acc after: {acc:?}");
+            }
 
-            acc0.0 += (spring_force + damp_force0) / fruit0.mass();
-            acc1.0 += (spring_force + damp_force1) / fruit1.mass();
+            let toward_other = seg.direction().as_vec2();
+            reaction(toward_other, overlap, &fruit0, &mut pos0, &mut vel0, &mut acc0);
+            // let squish = toward_other * (overlap / 2.);
+            // warn!("toward_other: {toward_other:?}");
+            // pos0.0 -= squish;
+
+            // let vel0_toward_other = vel0.dot(toward_other);
+            // warn!("vel0 before: {vel0:?}");
+            // vel0.0 -= toward_other * vel0_toward_other * BOUNCE;
+            // warn!("vel0 before: {vel0:?}");
+
+            // let spring_force = squish / radius0 * SPRING;
+            // warn!("spring_force: {spring_force:?}");
+            // let damp_force0 = toward_other * (vel0_toward_other * DAMPER).max(0.);
+            // warn!("damp_force: {damp_force0:?}");
+            // warn!("acc0 before: {acc0:?}");
+            // acc0.0 -= (spring_force + damp_force0) / fruit0.mass();
+            // warn!("acc0 after: {acc0:?}");
+
+
+            let toward_other = seg.direction().as_vec2() * -1.;
+            reaction(toward_other, overlap, &fruit1, &mut pos1, &mut vel1, &mut acc1);
+        //     let squish = toward_other * (overlap / 2.);
+        //     pos1.0 -= squish;
+
+        //     let vel1_toward_other = vel1.dot(toward_other);
+        //     vel1.0 -= toward_other * vel1_toward_other * BOUNCE;
+
+        //     let spring_force = squish / radius1 * SPRING;
+        //     let damp_force1 = toward_other * (vel1_toward_other * DAMPER).max(0.);
+        //     warn!("acc1 before: {acc1:?}");
+        //     acc1.0 -= (spring_force + damp_force1) / fruit1.mass();
+        //     warn!("acc1 after: {acc1:?}");
         }
     }
 
@@ -439,7 +479,7 @@ fn merge(
         }
         if let Some(new_type) = fruit0.next() {
             let midpoint = (pos0.0 + pos1.0) / 2.;
-            warn!("{midpoint:?}");
+            // warn!("{midpoint:?}");
 
             commands.entity(entity0).despawn();
             commands.entity(entity1).despawn();
