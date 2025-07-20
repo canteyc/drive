@@ -3,6 +3,7 @@ use bevy::{
     prelude::*,
     time::common_conditions::on_timer,
 };
+use std::fmt::{Display, Formatter, Error};
 use std::time::Duration;
 use std::collections::BTreeSet;
 
@@ -11,7 +12,7 @@ const RIGHT: f32 = 300.;
 const LEFT: f32 = -300.;
 const TOP: f32 = 300.;
 const BOTTOM: f32 = -300.;
-const THICKNESS: f32 = 1.;
+const THICKNESS: f32 = 2.;
 
 const RADIUS_BLUEBERRY: f32 = 10.;
 const RADIUS_CHERRY: f32 = 14.;
@@ -35,7 +36,7 @@ pub struct FruitGame;
 impl Plugin for FruitGame {
     fn build(&self, app: &mut App) {
         app
-        .add_systems(Startup, (load_container, load_player))
+        .add_systems(Startup, (load_container, load_player, load_input_display))
         .add_systems(Update, (
             player_input.run_if(on_timer(Duration::from_millis(500))),
         ))
@@ -204,15 +205,14 @@ pub struct Velocity(Vec2);
 #[derive(Debug, Component, Clone, Copy, PartialEq, Default, Deref, DerefMut)]
 pub struct Acceleration(Vec2);
 
-#[derive(Component)]
+#[derive(Debug, Component, Clone, PartialEq, Default, Deref, DerefMut)]
 pub struct DigitalInput {
     keys: Vec<String>,
 }
 
 impl DigitalInput {
     pub fn to_x(&self) -> f32 {
-        let input_string = format!("0.{}", self.keys.join(""));
-        LEFT + (RIGHT - LEFT) * input_string.parse::<f32>().unwrap()
+        LEFT + (RIGHT - LEFT) * self.to_string().parse::<f32>().unwrap()
     }
 
     pub fn add_digit(&mut self, key: KeyCode) {
@@ -235,6 +235,12 @@ impl DigitalInput {
     }
 }
 
+impl Display for DigitalInput {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
+        write!(f, "0.{}", self.keys.join(""))
+    }
+}
+
 fn load_player(
     mut commands: Commands,
     meshes: ResMut<Assets<Mesh>>,
@@ -242,11 +248,25 @@ fn load_player(
 ) {
     commands.spawn((
         Player {},
-        DigitalInput { keys: vec![] },
+        DigitalInput { keys: vec!["5".to_string()] },
         Fruit::new(FruitType::Blueberry, meshes, materials),
         Transform::from_xyz(0., TOP + RADIUS_BLUEBERRY, 0.),
     ));
     commands.insert_resource(AccumulatedInput(Default::default()));
+}
+
+
+#[derive(Debug, Component, Clone, Copy, PartialEq, Default)]
+pub struct PositionDisplay;
+
+fn load_input_display(
+    mut commands: Commands,
+) {
+    commands.spawn((
+        PositionDisplay,
+        Text2d::new(""),
+        Transform::from_xyz(LEFT + 20., BOTTOM - 40., 0.),
+    ));
 }
 
 fn player_input(
@@ -260,6 +280,7 @@ fn player_input(
         &MeshMaterial2d<ColorMaterial>,
         &mut Transform,
         )>,
+    position_display: Single<&mut Text2d, With<PositionDisplay>>,
 ) {
     let (mut digital_input, typ, mesh, material, mut transform) = query.into_inner();
 
@@ -284,11 +305,31 @@ fn player_input(
             Collider,
         ));
     }
+    let (dir, index) = {(
+        input.remove(&KeyCode::ArrowRight).then_some(1).or_else( || {
+            input.remove(&KeyCode::ArrowLeft).then_some(-1)
+        }),
+        if input.remove(&KeyCode::ControlLeft) || input.remove(&KeyCode::ControlRight) {
+            0
+        } else if digital_input.is_empty() {
+            0
+        } else {
+            digital_input.len() - 1
+        }
+    )};
+    if let Some(dir) = dir {
+        let mut value = digital_input.is_empty().then_some(0).unwrap_or_else(|| digital_input.remove(index).parse::<i32>().unwrap());
+        value += dir;
+        value = value.clamp(0, 9);
+        digital_input.insert(index, value.to_string());
+    }
+    
     while let Some(key) = input.pop_first() {
         digital_input.add_digit(key);
     }
-
+    
     transform.translation.x = digital_input.to_x();
+    position_display.into_inner().0 = digital_input.to_string();
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Deref, DerefMut, Resource)]
@@ -299,10 +340,7 @@ fn record_key_press(
     keyboard_input: Res<ButtonInput<KeyCode>>,
 ) {
     for key in keyboard_input.get_pressed() {
-        let cl = key.clone();
-        if input.insert(*key) {
-            warn!("{cl:?}");
-        }
+        input.insert(*key);
     }
 }
 
@@ -455,8 +493,7 @@ fn merge(
         }
         if let Some(new_type) = fruit0.next() {
             let midpoint = (pos0.0 + pos1.0) / 2.;
-            // warn!("{midpoint:?}");
-
+            
             commands.entity(entity0).despawn();
             commands.entity(entity1).despawn();
 
