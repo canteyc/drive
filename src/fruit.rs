@@ -9,27 +9,29 @@ use std::collections::BTreeSet;
 
 
 const RIGHT: f32 = 300.;
-const LEFT: f32 = -300.;
+const LEFT: f32 = RIGHT * -1.0;
 const TOP: f32 = 300.;
 const BOTTOM: f32 = -300.;
 const THICKNESS: f32 = 2.;
 
-const RADIUS_BLUEBERRY: f32 = 10.;
-const RADIUS_CHERRY: f32 = 14.;
-const RADIUS_APRICOT: f32 = 20.;
-const RADIUS_PLUM: f32 = 28.;
-const RADIUS_ORANGE: f32 = 40.;
-const RADIUS_APPLE: f32 = 56.;
-const RADIUS_GRAPEFRUIT: f32 = 80.;
-const RADIUS_HONEYDEW: f32 = 112.;
-const RADIUS_BASKETBALL: f32 = 160.;
-const RADIUS_WATERMELON: f32 = 224.;
+const RADIUS_BLUEBERRY: f32 = 10.0;
+const RADIUS_CHERRY: f32 = RADIUS_BLUEBERRY * 1.414;
+const RADIUS_APRICOT: f32 = RADIUS_BLUEBERRY * 2.0;
+const RADIUS_PLUM: f32 = RADIUS_CHERRY * 2.0;
+const RADIUS_ORANGE: f32 = RADIUS_APRICOT * 2.0;
+const RADIUS_APPLE: f32 = RADIUS_PLUM * 2.0;
+const RADIUS_GRAPEFRUIT: f32 = RADIUS_ORANGE * 2.0;
+const RADIUS_HONEYDEW: f32 = RADIUS_APPLE * 2.0;
+const RADIUS_BASKETBALL: f32 = RADIUS_GRAPEFRUIT * 2.0;
+const RADIUS_WATERMELON: f32 = RADIUS_HONEYDEW * 2.0;
 
 const GRAVITY: f32 = -100.;
 const DENSITY: f32 = 1e2;
 const SPRING: f32 = 1e2;
 const DAMPER: f32 = 1e1;
 const BOUNCE: f32 = 1.3;
+
+const DROP_DELAY: u64 = 300;
 
 pub struct FruitGame;
 
@@ -38,7 +40,7 @@ impl Plugin for FruitGame {
         app
         .add_systems(Startup, (load_container, load_player, load_input_display))
         .add_systems(Update, (
-            player_input.run_if(on_timer(Duration::from_millis(500))),
+            player_input.run_if(on_timer(Duration::from_millis(DROP_DELAY))),
         ))
         .add_systems(FixedUpdate, (
             record_key_press,
@@ -51,8 +53,10 @@ impl Plugin for FruitGame {
         ).chain())
         .add_systems(RunFixedMainLoop, (
             interpolate_rendered_transform.in_set(RunFixedMainLoopSystem::AfterFixedMainLoop),
+            reset.in_set(RunFixedMainLoopSystem::AfterFixedMainLoop).run_if(on_event::<ResetEvent>),
         ))
         .add_event::<CollisionEvent>()
+        .add_event::<ResetEvent>()
         ;
     }
 }
@@ -281,13 +285,18 @@ fn player_input(
         &mut Transform,
         )>,
     position_display: Single<&mut Text2d, With<PositionDisplay>>,
+    mut set_reset: EventWriter<ResetEvent>,
 ) {
     let (mut digital_input, typ, mesh, material, mut transform) = query.into_inner();
 
     if input.remove(&KeyCode::Backspace) {
-        digital_input.keys.pop();
+        if input.remove(&KeyCode::ShiftLeft) {
+            set_reset.write(ResetEvent);
+        } else {
+            digital_input.keys.pop();
+        }
     }
-    if input.remove(&KeyCode::ArrowDown) {
+    if input.remove(&KeyCode::ArrowDown) { // TODO Randomize player held fruit
         let mut fruit = Fruit {
             typ: *typ,
             mesh: mesh.clone(),
@@ -508,5 +517,20 @@ fn merge(
             break;
         }
 
+    }
+}
+
+
+#[derive(Event)]
+pub struct ResetEvent;
+
+fn reset(
+    mut commands: Commands,
+    query: Query<Entity, (With<FruitType>, With<Collider>)>,
+    _reader: EventReader<ResetEvent>,
+) {
+    warn!("reset");
+    for entity in query {
+        commands.entity(entity).despawn();
     }
 }
