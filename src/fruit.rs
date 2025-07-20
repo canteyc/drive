@@ -1,8 +1,10 @@
 use bevy::{
     color::palettes::basic::*,
-    // math::bounding::{Aabb2d, BoundingCircle},
     prelude::*,
+    time::common_conditions::on_timer,
 };
+use std::time::Duration;
+use std::collections::BTreeSet;
 
 
 const RIGHT: f32 = 300.;
@@ -35,9 +37,10 @@ impl Plugin for FruitGame {
         app
         .add_systems(Startup, (load_container, load_player))
         .add_systems(Update, (
-            player_input,
+            player_input.run_if(on_timer(Duration::from_millis(500))),
         ))
         .add_systems(FixedUpdate, (
+            record_key_press,
             apply_velocity,
             apply_acceleration,
             apply_gravity,
@@ -212,14 +215,7 @@ impl DigitalInput {
         LEFT + (RIGHT - LEFT) * input_string.parse::<f32>().unwrap()
     }
 
-    pub fn add_digit(&mut self, key: Res<ButtonInput<KeyCode>>) {
-        let mut keys = key.get_just_pressed();
-        if keys.len() != 1 {
-            return;
-        }
-
-        let key = keys.next().unwrap();
-
+    pub fn add_digit(&mut self, key: KeyCode) {
         let s = match key {
             KeyCode::Digit0 => 0.to_string(),
             KeyCode::Digit1 => 1.to_string(),
@@ -250,11 +246,12 @@ fn load_player(
         Fruit::new(FruitType::Blueberry, meshes, materials),
         Transform::from_xyz(0., TOP + RADIUS_BLUEBERRY, 0.),
     ));
+    commands.insert_resource(AccumulatedInput(Default::default()));
 }
 
 fn player_input(
     mut commands: Commands,
-    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut input: ResMut<AccumulatedInput>,
     query: Single<(
         // &Player,
         &mut DigitalInput,
@@ -266,10 +263,10 @@ fn player_input(
 ) {
     let (mut digital_input, typ, mesh, material, mut transform) = query.into_inner();
 
-    if keyboard_input.just_pressed(KeyCode::Backspace) {
+    if input.remove(&KeyCode::Backspace) {
         digital_input.keys.pop();
     }
-    else if keyboard_input.just_pressed(KeyCode::ArrowDown) {
+    if input.remove(&KeyCode::ArrowDown) {
         let mut fruit = Fruit {
             typ: *typ,
             mesh: mesh.clone(),
@@ -287,13 +284,27 @@ fn player_input(
             Collider,
         ));
     }
-    else {
-        digital_input.add_digit(keyboard_input);
+    while let Some(key) = input.pop_first() {
+        digital_input.add_digit(key);
     }
 
     transform.translation.x = digital_input.to_x();
 }
 
+#[derive(Debug, Clone, PartialEq, Default, Deref, DerefMut, Resource)]
+pub struct AccumulatedInput(BTreeSet<KeyCode>);
+
+fn record_key_press(
+    mut input: ResMut<AccumulatedInput>,
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+) {
+    for key in keyboard_input.get_pressed() {
+        let cl = key.clone();
+        if input.insert(*key) {
+            warn!("{cl:?}");
+        }
+    }
+}
 
 fn apply_velocity(
     time: Res<Time>,
@@ -410,56 +421,21 @@ fn check_fruit_collisions(
 
             fn reaction(toward_other: Vec2, overlap: f32, fruit: &FruitType, pos: &mut Position, vel: &mut Velocity, acc: &mut Acceleration) {
                 let squish = toward_other * (overlap / 2.);
-                // warn!("{fruit:?} - toward_other: {toward_other:?}");
                 pos.0 -= squish;
 
                 let vel_toward_other = vel.dot(toward_other);
-                // warn!("{fruit:?} - vel before: {vel:?}");
                 vel.0 -= toward_other * vel_toward_other * BOUNCE;
-                // warn!("{fruit:?} - vel after: {vel:?}");
 
                 let spring_force = squish / fruit.to_circle().radius * SPRING;
-                // warn!("{fruit:?} - spring_force: {spring_force:?}");
                 let damp_force = toward_other * (vel_toward_other * DAMPER).max(0.);
-                // warn!("{fruit:?} - damp_force: {damp_force:?}");
-                // warn!("{fruit:?} - acc before: {acc:?}");
                 acc.0 -= (spring_force + damp_force) / fruit.mass();
-                // warn!("{fruit:?} - acc after: {acc:?}");
             }
 
             let toward_other = seg.direction().as_vec2();
             reaction(toward_other, overlap, &fruit0, &mut pos0, &mut vel0, &mut acc0);
-            // let squish = toward_other * (overlap / 2.);
-            // warn!("toward_other: {toward_other:?}");
-            // pos0.0 -= squish;
-
-            // let vel0_toward_other = vel0.dot(toward_other);
-            // warn!("vel0 before: {vel0:?}");
-            // vel0.0 -= toward_other * vel0_toward_other * BOUNCE;
-            // warn!("vel0 before: {vel0:?}");
-
-            // let spring_force = squish / radius0 * SPRING;
-            // warn!("spring_force: {spring_force:?}");
-            // let damp_force0 = toward_other * (vel0_toward_other * DAMPER).max(0.);
-            // warn!("damp_force: {damp_force0:?}");
-            // warn!("acc0 before: {acc0:?}");
-            // acc0.0 -= (spring_force + damp_force0) / fruit0.mass();
-            // warn!("acc0 after: {acc0:?}");
-
 
             let toward_other = seg.direction().as_vec2() * -1.;
             reaction(toward_other, overlap, &fruit1, &mut pos1, &mut vel1, &mut acc1);
-        //     let squish = toward_other * (overlap / 2.);
-        //     pos1.0 -= squish;
-
-        //     let vel1_toward_other = vel1.dot(toward_other);
-        //     vel1.0 -= toward_other * vel1_toward_other * BOUNCE;
-
-        //     let spring_force = squish / radius1 * SPRING;
-        //     let damp_force1 = toward_other * (vel1_toward_other * DAMPER).max(0.);
-        //     warn!("acc1 before: {acc1:?}");
-        //     acc1.0 -= (spring_force + damp_force1) / fruit1.mass();
-        //     warn!("acc1 after: {acc1:?}");
         }
     }
 
