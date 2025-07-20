@@ -423,11 +423,11 @@ fn check_fruit_collisions(
                 let squish = toward_other * (overlap / 2.);
                 pos.0 -= squish;
 
-                let vel_toward_other = vel.dot(toward_other);
+                let vel_toward_other = vel.dot(toward_other).max(0.);
                 vel.0 -= toward_other * vel_toward_other * BOUNCE;
 
                 let spring_force = squish / fruit.to_circle().radius * SPRING;
-                let damp_force = toward_other * (vel_toward_other * DAMPER).max(0.);
+                let damp_force = toward_other * vel_toward_other * DAMPER;
                 acc.0 -= (spring_force + damp_force) / fruit.mass();
             }
 
