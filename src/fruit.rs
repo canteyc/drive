@@ -6,6 +6,7 @@ use bevy::{
 use std::fmt::{Display, Formatter, Error};
 use std::time::Duration;
 use std::collections::BTreeSet;
+use std::ops::Deref;
 
 
 const RIGHT: f32 = 300.;
@@ -31,7 +32,8 @@ const SPRING: f32 = 1e2;
 const DAMPER: f32 = 1e1;
 const BOUNCE: f32 = 1.3;
 
-const DROP_DELAY: u64 = 300;
+const INPUT_RATE_HZ: u64 = 1;
+const REPEAT_RATE_HZ: u64 = 3;
 
 pub struct FruitGame;
 
@@ -40,10 +42,12 @@ impl Plugin for FruitGame {
         app
         .add_systems(Startup, (load_container, load_player, load_input_display))
         .add_systems(Update, (
-            player_input.run_if(on_timer(Duration::from_millis(DROP_DELAY))),
+            player_input.run_if(on_timer(Duration::from_millis(1000 / INPUT_RATE_HZ))),
+            fast_drop.run_if(on_timer(Duration::from_millis(1000 / REPEAT_RATE_HZ))),
         ))
         .add_systems(FixedUpdate, (
             record_key_press,
+            drop_fruit.run_if(on_event::<DropEvent>),
             apply_velocity,
             apply_acceleration,
             apply_gravity,
@@ -57,6 +61,8 @@ impl Plugin for FruitGame {
         ))
         .add_event::<CollisionEvent>()
         .add_event::<ResetEvent>()
+        .add_event::<DropEvent>()
+        .init_resource::<Events<KeyHoldEvent>>()
         ;
     }
 }
@@ -257,6 +263,7 @@ fn load_player(
         Transform::from_xyz(0., TOP + RADIUS_BLUEBERRY, 0.),
     ));
     commands.insert_resource(AccumulatedInput(Default::default()));
+    commands.insert_resource(PreviousAccumulatedInput(Default::default()));
 }
 
 
@@ -274,21 +281,17 @@ fn load_input_display(
 }
 
 fn player_input(
-    mut commands: Commands,
     mut input: ResMut<AccumulatedInput>,
-    query: Single<(
-        // &Player,
-        &mut DigitalInput,
-        &FruitType,
-        &Mesh2d,
-        &MeshMaterial2d<ColorMaterial>,
-        &mut Transform,
-        )>,
+    mut previous_input: ResMut<PreviousAccumulatedInput>,
+    digital_input: Single<(&mut DigitalInput, &mut Transform)>,
     position_display: Single<&mut Text2d, With<PositionDisplay>>,
     mut set_reset: EventWriter<ResetEvent>,
+    mut hold_event: ResMut<Events<KeyHoldEvent>>,
+    mut drop_event: EventWriter<DropEvent>,
 ) {
-    let (mut digital_input, typ, mesh, material, mut transform) = query.into_inner();
-
+    hold_event.update();
+    let (mut digital_input, mut transform) = digital_input.into_inner();
+    
     if input.remove(&KeyCode::Backspace) {
         if input.remove(&KeyCode::ShiftLeft) {
             set_reset.write(ResetEvent);
@@ -296,23 +299,15 @@ fn player_input(
             digital_input.keys.pop();
         }
     }
-    if input.remove(&KeyCode::ArrowDown) { // TODO Randomize player held fruit
-        let mut fruit = Fruit {
-            typ: *typ,
-            mesh: mesh.clone(),
-            material: material.clone(),
-            pos: Position(transform.translation.truncate()),
-            pre: PreviousPosition(transform.translation.truncate()),
-            vel: Default::default(),
-            acc: Default::default(),
-        };
-        fruit.vel.0 += Vec2::new(0., -50.);
-        // drop fruit
-        commands.spawn((
-            fruit,
-            *transform,
-            Collider,
-        ));
+    if input.remove(&KeyCode::ArrowDown) { 
+        if previous_input.remove(&KeyCode::ArrowDown) {
+            hold_event.send(KeyHoldEvent(KeyCode::ArrowDown));
+        } else {
+            drop_event.write(DropEvent);
+        }
+        previous_input.insert(KeyCode::ArrowDown);       
+    } else {
+        previous_input.remove(&KeyCode::ArrowDown);
     }
     let (dir, index) = {(
         input.remove(&KeyCode::ArrowRight).then_some(1).or_else( || {
@@ -341,8 +336,47 @@ fn player_input(
     position_display.into_inner().0 = digital_input.to_string();
 }
 
+// TODO Randomize player held fruit
+fn drop_fruit(
+    mut commands: Commands,
+    query: Single<(
+        &FruitType,
+        &Mesh2d,
+        &MeshMaterial2d<ColorMaterial>,
+        &Transform,
+        ), With<Player>>,
+    mut drop_event: ResMut<Events<DropEvent>>,
+) {
+    drop_event.clear();
+    let (typ, mesh, material, transform) = query.into_inner();
+    let mut fruit = Fruit {
+        typ: *typ,
+        mesh: mesh.clone(),
+        material: material.clone(),
+        pos: Position(transform.translation.truncate()),
+        pre: PreviousPosition(transform.translation.truncate()),
+        vel: Default::default(),
+        acc: Default::default(),
+    };
+    fruit.vel.0 += Vec2::new(0., -50.);
+    commands.spawn((
+        fruit,
+        *transform,
+        Collider,
+    ));
+}
+
+#[derive(Debug, Event, Clone, PartialEq)]
+pub struct DropEvent;
+
+#[derive(Debug, Event, Clone, PartialEq, Deref, DerefMut)]
+pub struct KeyHoldEvent(KeyCode);
+
 #[derive(Debug, Clone, PartialEq, Default, Deref, DerefMut, Resource)]
 pub struct AccumulatedInput(BTreeSet<KeyCode>);
+
+#[derive(Debug, Clone, PartialEq, Default, Deref, DerefMut, Resource)]
+pub struct PreviousAccumulatedInput(BTreeSet<KeyCode>);
 
 fn record_key_press(
     mut input: ResMut<AccumulatedInput>,
@@ -350,6 +384,23 @@ fn record_key_press(
 ) {
     for key in keyboard_input.get_pressed() {
         input.insert(*key);
+    }
+}
+
+fn fast_drop(
+    mut input: ResMut<AccumulatedInput>,
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut drop_event: EventWriter<DropEvent>,
+    mut hold_event: ResMut<Events<KeyHoldEvent>>,
+) {
+    let event = hold_event.drain().find(|event|**event == KeyCode::ArrowDown);
+    if let Some(event) = event {
+        if keyboard_input.pressed(KeyCode::ArrowDown) {
+            drop_event.write(DropEvent);
+            hold_event.send(KeyHoldEvent(KeyCode::ArrowDown));
+        } else {
+            hold_event.clear();
+        }
     }
 }
 
