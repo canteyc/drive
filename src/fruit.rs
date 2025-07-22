@@ -499,6 +499,7 @@ pub struct CollisionEvent([(Entity, FruitType, Position, Velocity, Acceleration)
 
 fn check_wall_collisions(
     collider_query: Query<(&FruitType, &mut Position, &mut Velocity, &mut Acceleration), With<Collider>>,
+    mut reset_writer: EventWriter<ResetEvent>,
 ) {
     for (fruit, mut pos, mut vel, mut acc) in collider_query {
         let radius = fruit.to_circle().radius;
@@ -527,6 +528,10 @@ fn check_wall_collisions(
             let y_force = bottom_squish * SPRING - vel.y * DAMPER;
             acc.y += y_force / fruit.mass();
             acc.x -= vel.x * DAMPER * 0.1;
+        }
+        let top_squish = radius - (TOP - pos.y);
+        if top_squish > 0. {
+            reset_writer.write(ResetEvent);
         }
     }
 }
