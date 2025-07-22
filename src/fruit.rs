@@ -370,25 +370,27 @@ fn drop_fruit(
         &mut FruitType,
         &mut Mesh2d,
         &mut MeshMaterial2d<ColorMaterial>,
-        &Transform,
+        &mut Transform,
         ), With<Player>>,
     mut drop_event: ResMut<Events<DropEvent>>,
 ) {
     drop_event.clear();
-    let (mut typ, mut mesh, mut material, transform) = query.into_inner();
+    let (mut typ, mut mesh, mut material, mut transform) = query.into_inner();
+    let radius = typ.to_circle().radius;
+    let mut spawn_location = *transform;
+    spawn_location.translation.y -= radius * 2.;
     let mut fruit = Fruit {
         typ: *typ,
         mesh: mesh.clone(),
         material: material.clone(),
-        pos: Position(transform.translation.truncate()),
-        pre: PreviousPosition(transform.translation.truncate()),
-        vel: Default::default(),
+        pos: Position(spawn_location.translation.truncate()),
+        pre: PreviousPosition(spawn_location.translation.truncate()),
+        vel: Velocity(Vec2::new(0., -100.)),
         acc: Default::default(),
     };
-    fruit.vel.0 += Vec2::new(0., -50.);
     commands.spawn((
         fruit,
-        *transform,
+        spawn_location,
         Collider,
     ));
 
@@ -396,6 +398,7 @@ fn drop_fruit(
     *typ = new_fruit.typ;
     *mesh = new_fruit.mesh;
     *material = new_fruit.material;
+    transform.translation.y = TOP + typ.to_circle().radius;
 }
 
 #[derive(Debug, Event, Clone, PartialEq)]
@@ -586,8 +589,12 @@ fn merge(
         if let Some(new_type) = fruit0.next() {
             let midpoint = (pos0.0 + pos1.0) / 2.;
             
-            commands.entity(entity0).despawn();
-            commands.entity(entity1).despawn();
+            if let Ok(mut e) = commands.get_entity(entity0) {
+                e.despawn();
+            }
+            if let Ok(mut e) = commands.get_entity(entity1) {
+                e.despawn();
+            }
 
             let mut merged_fruit = Fruit::new(new_type, meshes, materials);
             merged_fruit.pos.0 = midpoint;
