@@ -7,6 +7,7 @@ use std::fmt::{Display, Formatter, Error};
 use std::time::Duration;
 use std::collections::BTreeSet;
 use std::ops::Deref;
+use rand::seq::IndexedRandom;
 
 
 const RIGHT: f32 = 300.;
@@ -33,7 +34,7 @@ const DAMPER: f32 = 1e1;
 const BOUNCE: f32 = 1.3;
 
 const INPUT_RATE_HZ: u64 = 1;
-const REPEAT_RATE_HZ: u64 = 3;
+const REPEAT_RATE_HZ: u64 = 2;
 
 pub struct FruitGame;
 
@@ -82,6 +83,19 @@ pub enum FruitType {
     Basketball,
     Watermelon,
 }
+
+const ALL_FRUIT_TYPES: [FruitType; 10] = [    
+    FruitType::Blueberry,
+    FruitType::Cherry,
+    FruitType::Apricot,
+    FruitType::Plum,
+    FruitType::Orange,
+    FruitType::Apple,
+    FruitType::Grapefruit,
+    FruitType::Honeydew,
+    FruitType::Basketball,
+    FruitType::Watermelon,
+];
 
 impl FruitType {
     pub fn next(&self) -> Option<FruitType> {
@@ -157,6 +171,17 @@ impl Fruit {
             material: MeshMaterial2d(materials.add(typ.color())),
             ..Default::default()
         }
+    }
+
+    pub fn rand_to(
+        upper: FruitType,
+        mut meshes: ResMut<Assets<Mesh>>,
+        mut materials: ResMut<Assets<ColorMaterial>>,
+    ) -> Self {
+        let mut rng = rand::rng();
+        let choices: Vec<FruitType> = ALL_FRUIT_TYPES.into_iter().take_while(|typ| typ <= &upper).collect();
+        let typ = choices.choose(&mut rng).unwrap();
+        Self::new(*typ, meshes, materials)
     }
 }
 
@@ -339,16 +364,18 @@ fn player_input(
 // TODO Randomize player held fruit
 fn drop_fruit(
     mut commands: Commands,
+    meshes: ResMut<Assets<Mesh>>,
+    materials: ResMut<Assets<ColorMaterial>>,
     query: Single<(
-        &FruitType,
-        &Mesh2d,
-        &MeshMaterial2d<ColorMaterial>,
+        &mut FruitType,
+        &mut Mesh2d,
+        &mut MeshMaterial2d<ColorMaterial>,
         &Transform,
         ), With<Player>>,
     mut drop_event: ResMut<Events<DropEvent>>,
 ) {
     drop_event.clear();
-    let (typ, mesh, material, transform) = query.into_inner();
+    let (mut typ, mut mesh, mut material, transform) = query.into_inner();
     let mut fruit = Fruit {
         typ: *typ,
         mesh: mesh.clone(),
@@ -364,6 +391,11 @@ fn drop_fruit(
         *transform,
         Collider,
     ));
+
+    let new_fruit = Fruit::rand_to(FruitType::Apricot, meshes, materials);
+    *typ = new_fruit.typ;
+    *mesh = new_fruit.mesh;
+    *material = new_fruit.material;
 }
 
 #[derive(Debug, Event, Clone, PartialEq)]
