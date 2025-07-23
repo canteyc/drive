@@ -6,7 +6,6 @@ use bevy::{
 use std::fmt::{Display, Formatter, Error};
 use std::time::Duration;
 use std::collections::BTreeSet;
-use std::ops::Deref;
 use rand::seq::IndexedRandom;
 
 
@@ -84,20 +83,21 @@ pub enum FruitType {
     Watermelon,
 }
 
-const ALL_FRUIT_TYPES: [FruitType; 10] = [    
-    FruitType::Blueberry,
-    FruitType::Cherry,
-    FruitType::Apricot,
-    FruitType::Plum,
-    FruitType::Orange,
-    FruitType::Apple,
-    FruitType::Grapefruit,
-    FruitType::Honeydew,
-    FruitType::Basketball,
-    FruitType::Watermelon,
-];
 
 impl FruitType {
+    const ALL: [FruitType; 10] = [
+        FruitType::Blueberry,
+        FruitType::Cherry,
+        FruitType::Apricot,
+        FruitType::Plum,
+        FruitType::Orange,
+        FruitType::Apple,
+        FruitType::Grapefruit,
+        FruitType::Honeydew,
+        FruitType::Basketball,
+        FruitType::Watermelon,
+    ];
+
     pub fn next(&self) -> Option<FruitType> {
         match self {
             FruitType::Blueberry => Some(FruitType::Cherry),
@@ -175,11 +175,11 @@ impl Fruit {
 
     pub fn rand_to(
         upper: FruitType,
-        mut meshes: ResMut<Assets<Mesh>>,
-        mut materials: ResMut<Assets<ColorMaterial>>,
+        meshes: ResMut<Assets<Mesh>>,
+        materials: ResMut<Assets<ColorMaterial>>,
     ) -> Self {
         let mut rng = rand::rng();
-        let choices: Vec<FruitType> = ALL_FRUIT_TYPES.into_iter().take_while(|typ| typ <= &upper).collect();
+        let choices: Vec<FruitType> = FruitType::ALL.into_iter().take_while(|typ| typ <= &upper).collect();
         let typ = choices.choose(&mut rng).unwrap();
         Self::new(*typ, meshes, materials)
     }
@@ -316,7 +316,7 @@ fn player_input(
 ) {
     hold_event.update();
     let (mut digital_input, mut transform) = digital_input.into_inner();
-    
+
     if input.remove(&KeyCode::Backspace) {
         if input.remove(&KeyCode::ShiftLeft) {
             set_reset.write(ResetEvent);
@@ -324,13 +324,13 @@ fn player_input(
             digital_input.keys.pop();
         }
     }
-    if input.remove(&KeyCode::ArrowDown) { 
+    if input.remove(&KeyCode::ArrowDown) {
         if previous_input.remove(&KeyCode::ArrowDown) {
             hold_event.send(KeyHoldEvent(KeyCode::ArrowDown));
         } else {
             drop_event.write(DropEvent);
         }
-        previous_input.insert(KeyCode::ArrowDown);       
+        previous_input.insert(KeyCode::ArrowDown);
     } else {
         previous_input.remove(&KeyCode::ArrowDown);
     }
@@ -352,16 +352,15 @@ fn player_input(
         value = value.clamp(0, 9);
         digital_input.insert(index, value.to_string());
     }
-    
+
     while let Some(key) = input.pop_first() {
         digital_input.add_digit(key);
     }
-    
+
     transform.translation.x = digital_input.to_x();
     position_display.into_inner().0 = digital_input.to_string();
 }
 
-// TODO Randomize player held fruit
 fn drop_fruit(
     mut commands: Commands,
     meshes: ResMut<Assets<Mesh>>,
@@ -379,7 +378,7 @@ fn drop_fruit(
     let radius = typ.to_circle().radius;
     let mut spawn_location = *transform;
     spawn_location.translation.y -= radius * 2.;
-    let mut fruit = Fruit {
+    let fruit = Fruit {
         typ: *typ,
         mesh: mesh.clone(),
         material: material.clone(),
@@ -423,13 +422,12 @@ fn record_key_press(
 }
 
 fn fast_drop(
-    mut input: ResMut<AccumulatedInput>,
     keyboard_input: Res<ButtonInput<KeyCode>>,
     mut drop_event: EventWriter<DropEvent>,
     mut hold_event: ResMut<Events<KeyHoldEvent>>,
 ) {
     let event = hold_event.drain().find(|event|**event == KeyCode::ArrowDown);
-    if let Some(event) = event {
+    if event.is_some() {
         if keyboard_input.pressed(KeyCode::ArrowDown) {
             drop_event.write(DropEvent);
             hold_event.send(KeyHoldEvent(KeyCode::ArrowDown));
@@ -593,7 +591,7 @@ fn merge(
         }
         if let Some(new_type) = fruit0.next() {
             let midpoint = (pos0.0 + pos1.0) / 2.;
-            
+
             if let Ok(mut e) = commands.get_entity(entity0) {
                 e.despawn();
             }
