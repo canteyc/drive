@@ -42,12 +42,8 @@ impl FruitType {
     }
 
     pub fn next(&self) -> Option<FruitType> {
-        for i in 1..Self::ALL.len() - 1 {
-            if Self::ALL[i - 1] == *self {
-                return Some(Self::ALL[i]);
-            }
-        }
-        None
+        let i = Self::ALL.binary_search(self).unwrap();
+        Self::ALL.as_slice().get(i + 1).copied()
     }
 
     pub fn to_circle(&self) -> Circle {
@@ -56,8 +52,8 @@ impl FruitType {
 
     pub fn radius(&self) -> f32 {
         let mut r = RADIUS_BLUEBERRY;
-        let f = FruitType::Blueberry;
-        while let Some(f) = f.next() && f < *self {
+        let i = Self::ALL.binary_search(self).unwrap();
+        for _ in 0..i {
             r *= 1.41421356237;
         }
         r
@@ -81,5 +77,24 @@ impl FruitType {
     pub fn mass(&self) -> f32 {
         let r = self.radius();
         r * r * DENSITY
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_next() {
+        assert_eq!(FruitType::Blueberry.next(), Some(FruitType::Cherry));
+        assert_eq!(FruitType::Cherry.next(), Some(FruitType::Apricot));
+        assert_eq!(FruitType::Apricot.next(), Some(FruitType::Plum));
+        assert_eq!(FruitType::Plum.next(), Some(FruitType::Orange));
+        assert_eq!(FruitType::Orange.next(), Some(FruitType::Apple));
+        assert_eq!(FruitType::Apple.next(), Some(FruitType::Grapefruit));
+        assert_eq!(FruitType::Grapefruit.next(), Some(FruitType::Honeydew));
+        assert_eq!(FruitType::Honeydew.next(), Some(FruitType::Basketball));
+        assert_eq!(FruitType::Basketball.next(), Some(FruitType::Watermelon));
+        assert_eq!(FruitType::Watermelon.next(), None);
     }
 }
