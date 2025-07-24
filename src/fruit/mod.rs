@@ -149,13 +149,14 @@ fn merge(
     mut collisions: EventReader<CollisionEvent>,
 ) {
     for collision in collisions.read() {
-        let (entity0, fruit0, pos0, _, _) = collision[0];
-        let (entity1, fruit1, pos1, _, _) = collision[1];
+        let (entity0, fruit0, pos0, vel0, _) = collision[0];
+        let (entity1, fruit1, pos1, vel1, _) = collision[1];
         if fruit0 != fruit1 {
             continue;
         }
         if let Some(new_type) = fruit0.next() {
             let midpoint = (*pos0 + *pos1) / 2.;
+            let vel = (*vel0 * fruit0.mass() + *vel1 * fruit1.mass()) / new_type.mass();
 
             if let Ok(mut e) = commands.get_entity(entity0) {
                 e.despawn();
@@ -167,6 +168,7 @@ fn merge(
             let mut merged_fruit = Fruit::new(new_type, meshes, materials);
             *merged_fruit.pos = midpoint;
             *merged_fruit.pre = midpoint;
+            *merged_fruit.vel = vel;
             commands.spawn((
                 merged_fruit,
                 Transform::from_xyz(midpoint.x, midpoint.y, 0.),
