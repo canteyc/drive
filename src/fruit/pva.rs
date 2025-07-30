@@ -24,7 +24,7 @@ pub fn apply_velocity(
     let dt2 = 0.5 * dt * dt;
     for (mut pos, mut pre, vel, acc) in &mut query {
         pre.0 = pos.0;
-        pos.0 += vel.0 * dt + 0.5 * acc.0 * dt2;
+        pos.0 += vel.0 * dt + acc.0 * dt2;
     }
 }
 

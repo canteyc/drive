@@ -3,6 +3,7 @@ use bevy::prelude::*;
 use crate::fruit::world::{LEFT, RIGHT, BOTTOM, TOP};
 use crate::fruit::pva::{Acceleration, Position, Velocity};
 use crate::fruit::reset::ResetEvent;
+use crate::fruit::toa::{Alpha, Omega, Theta};
 use crate::fruit::typ::FruitType;
 
 const SPRING: f32 = 1e2;
@@ -48,7 +49,7 @@ pub fn check_wall_collisions(
             acc.x -= vel.x * DAMPER * 0.1;
         }
         let top_squish = radius - (TOP - pos.y);
-        if top_squish > 0. {
+        if top_squish > radius {
             reset_writer.write(ResetEvent);
         }
     }
@@ -56,12 +57,21 @@ pub fn check_wall_collisions(
 
 pub fn check_fruit_collisions(
     mut collisions: EventWriter<CollisionEvent>,
-    mut collider_query: Query<(Entity, &FruitType, &mut Position, &mut Velocity, &mut Acceleration), With<Collider>>,
+    mut collider_query: Query<(
+        Entity,
+        &FruitType,
+        &mut Position,
+        &mut Velocity,
+        &mut Acceleration,
+        &mut Theta,
+        &mut Omega,
+    ), With<Collider>>,
+
 ) {
     let mut combinations = collider_query.iter_combinations_mut();
     while let Some([
-        (entity0, fruit0, mut pos0, mut vel0, mut acc0),
-        (entity1, fruit1, mut pos1, mut vel1, mut acc1),
+        (entity0, fruit0, mut pos0, mut vel0, mut acc0, mut theta0, mut omega0),
+        (entity1, fruit1, mut pos1, mut vel1, mut acc1, mut theta1, mut omega1),
     ]) = combinations.fetch_next() {
         let radius0 = fruit0.to_circle().radius;
         let radius1 = fruit1.to_circle().radius;
@@ -75,23 +85,31 @@ pub fn check_fruit_collisions(
                 (entity1, fruit1.clone(), pos1.clone(), vel1.clone(), acc1.clone())
             ]));
 
-            fn reaction(toward_other: Vec2, overlap: f32, fruit: &FruitType, pos: &mut Position, vel: &mut Velocity, acc: &mut Acceleration) {
+            fn reaction(toward_other: Vec2, overlap: f32, fruit: &FruitType, pos: &mut Position, vel: &mut Velocity, acc: &mut Acceleration, omega: &mut Omega) {
+                let radius = fruit.radius();
+                let contact_point = **pos + toward_other * (radius - overlap / 2.);
+                let vel_toward_other = toward_other * vel.dot(toward_other).max(0.);
+                let tangential_vel = **vel - vel_toward_other;
+                let spinning_edge_velocity = toward_other.perp() * **omega * radius;
+                let slip_velocity = toward_other.perp_dot(spinning_edge_velocity + tangential_vel);
+
+                // dbg!(toward_other, vel_toward_other, tangential_vel, spinning_edge_velocity, slip_velocity);
                 let squish = toward_other * (overlap / 2.);
+                let spring_force = squish / radius * SPRING;
+                let damp_force = vel_toward_other * DAMPER;
+
                 pos.0 -= squish;
-
-                let vel_toward_other = vel.dot(toward_other).max(0.);
-                vel.0 -= toward_other * vel_toward_other * BOUNCE;
-
-                let spring_force = squish / fruit.to_circle().radius * SPRING;
-                let damp_force = toward_other * vel_toward_other * DAMPER;
+                vel.0 -= vel_toward_other * BOUNCE;
                 acc.0 -= (spring_force + damp_force) / fruit.mass();
+                **omega -= slip_velocity / radius;
+                // **vel -= slip_velocity;
             }
 
             let toward_other = seg.direction().as_vec2();
-            reaction(toward_other, overlap, &fruit0, &mut pos0, &mut vel0, &mut acc0);
+            reaction(toward_other, overlap, &fruit0, &mut pos0, &mut vel0, &mut acc0, &mut omega0);
 
             let toward_other = seg.direction().as_vec2() * -1.;
-            reaction(toward_other, overlap, &fruit1, &mut pos1, &mut vel1, &mut acc1);
+            reaction(toward_other, overlap, &fruit1, &mut pos1, &mut vel1, &mut acc1, &mut omega1);
         }
     }
 

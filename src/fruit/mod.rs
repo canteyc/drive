@@ -2,6 +2,7 @@ pub(crate) mod collision;
 pub(crate) mod input;
 pub(crate) mod pva;
 pub(crate) mod reset;
+pub(crate) mod toa;
 pub(crate) mod typ;
 pub(crate) mod world;
 
@@ -14,6 +15,7 @@ use collision::{Collider, CollisionEvent, check_fruit_collisions, check_wall_col
 use input::{DropEvent, KeyHoldEvent, Player, record_key_press, load_player, load_input_display, player_input, fast_drop};
 use pva::{Acceleration, Position, PreviousPosition, Velocity, apply_acceleration, apply_gravity, apply_velocity};
 use reset::{reset, ResetEvent};
+use toa::{Omega, Theta};
 use typ::FruitType;
 use world::{load_container, TOP};
 
@@ -42,6 +44,7 @@ impl Plugin for FruitGame {
         ).chain())
         .add_systems(RunFixedMainLoop, (
             interpolate_rendered_transform.in_set(RunFixedMainLoopSystem::AfterFixedMainLoop),
+            // indicate_spin.in_set(RunFixedMainLoopSystem::AfterFixedMainLoop),
             reset.in_set(RunFixedMainLoopSystem::AfterFixedMainLoop).run_if(on_event::<ResetEvent>),
         ))
         .add_event::<CollisionEvent>()
@@ -61,6 +64,8 @@ pub struct Fruit {
     pub pre: PreviousPosition,
     pub vel: Velocity,
     pub acc: Acceleration,
+    pub theta: Theta,
+    pub omega: Omega,
 }
 
 impl Fruit {
@@ -72,7 +77,7 @@ impl Fruit {
         Self {
             typ,
             mesh: Mesh2d(meshes.add(typ.to_circle())),
-            material: MeshMaterial2d(materials.add(typ.color())),
+            material: MeshMaterial2d(materials.add(typ.color().with_alpha(0.5))),
             ..Default::default()
         }
     }
@@ -111,6 +116,8 @@ fn drop_fruit(
         pre: PreviousPosition(spawn_location.translation.truncate()),
         vel: Velocity(Vec2::new(0., -100.)),
         acc: Default::default(),
+        theta: Default::default(),
+        omega: Default::default(),
     };
     commands.spawn((
         fruit,
@@ -141,6 +148,24 @@ fn interpolate_rendered_transform(
         transform.translation = rendered_translation.extend(1.0);
     }
 }
+
+// fn indicate_spin(
+//     mut query: Query<(
+//         &Omega,
+//         &mut MeshMaterial2d<ColorMaterial>,
+//     )>,
+//     mut materials: ResMut<Assets<ColorMaterial>>,
+// ) {
+//     for (&omega, mut material) in query.into_iter() {
+//         let alpha = 0.5 + *omega * 0.05;
+//         // if *omega != 0. {
+//         //     warn!("{omega:?}");
+//         // }
+//         if let Some(mut color_material) = materials.get_mut(&material.0) {
+//             color_material.color.set_alpha(alpha);
+//         }
+//     }
+// }
 
 fn merge(
     mut commands: Commands,
