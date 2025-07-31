@@ -17,20 +17,34 @@ pub struct Collider;
 pub struct CollisionEvent([(Entity, FruitType, Position, Velocity, Acceleration); 2]);
 
 pub fn check_wall_collisions(
-    collider_query: Query<(&FruitType, &mut Position, &mut Velocity, &mut Acceleration), With<Collider>>,
+    collider_query: Query<(
+        &FruitType,
+        &mut Position,
+        &mut Velocity,
+        &mut Acceleration,
+        &mut Theta,
+        &mut Omega,
+    ), With<Collider>>,
     mut reset_writer: EventWriter<ResetEvent>,
 ) {
-    for (fruit, mut pos, mut vel, mut acc) in collider_query {
+    for (fruit, mut pos, mut vel, mut acc, mut theta, mut omega) in collider_query {
         let radius = fruit.to_circle().radius;
+        let spin_edge_vel = **omega * radius;
 
         let right_squish = radius - (RIGHT - pos.x);
         let x_force = if right_squish > 0. {
             pos.x = RIGHT - radius;
+            let edge_slip = vel.y + spin_edge_vel;
+            vel.y -= edge_slip;
+            **omega -= edge_slip / radius;
             -right_squish * SPRING - vel.x * DAMPER
         } else {
             let left_squish = radius - (pos.x - LEFT);
             if left_squish > 0. {
                 pos.x = LEFT + radius;
+                let edge_slip = vel.y - spin_edge_vel;
+                vel.y -= edge_slip;
+                **omega += edge_slip / radius;
                 left_squish * SPRING - vel.x * DAMPER
             } else {
                 0.0
@@ -43,11 +57,15 @@ pub fn check_wall_collisions(
         let bottom_squish = radius - (pos.y - BOTTOM);
         if bottom_squish > 0. {
             pos.y = BOTTOM + radius;
-            vel.y = 0.;
+            let edge_slip = vel.x - spin_edge_vel;
+            vel.x -= edge_slip;
+            **omega += edge_slip / radius;
             let y_force = bottom_squish * SPRING - vel.y * DAMPER;
+            vel.y = 0.;
             acc.y += y_force / fruit.mass();
             acc.x -= vel.x * DAMPER * 0.1;
         }
+
         let top_squish = radius - (TOP - pos.y);
         if top_squish > radius {
             reset_writer.write(ResetEvent);
@@ -66,7 +84,6 @@ pub fn check_fruit_collisions(
         &mut Theta,
         &mut Omega,
     ), With<Collider>>,
-
 ) {
     let mut combinations = collider_query.iter_combinations_mut();
     while let Some([
